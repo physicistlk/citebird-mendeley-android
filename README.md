@@ -1,12 +1,8 @@
-# CiteBird — Open-Source Mendeley for Android Replacement
+# CiteBird — Open-Source Mendeley & EndNote Alternative for Android
 
-An open-source, tablet-first **reference manager and academic PDF reader** built as a modern replacement for the discontinued **Mendeley for Android** app.
+An open-source, tablet-first **reference manager and academic PDF annotator** built as a modern replacement for the discontinued **Mendeley for Android** app and a lightweight **EndNote for Android** / **OneNote-style PDF** alternative.
 
-Designed for Android 16+ tablets (Paperpile-inspired 3-column workspace + Mendeley Web Library sync, folders/collections, labels, and distraction-free PDF reading & annotation).
-
-## Why CiteBird?
-
-Elsevier discontinued the official **Mendeley for Android** app (1.20.1, `targetSdk 29`). CiteBird provides an open-source, pure-Kotlin / Jetpack Compose alternative that connects directly to your Mendeley library while keeping all PDFs and annotations local on your tablet.
+**[Download Latest APK (v1.0.0)](https://github.com/physicistlk/citebird-mendeley-android/releases/latest)**
 
 ## Screenshots
 
@@ -14,39 +10,30 @@ Elsevier discontinued the official **Mendeley for Android** app (1.20.1, `target
 | --- | --- |
 | ![CiteBird Landscape](docs/screenshot-landscape.png) | ![CiteBird Portrait](docs/screenshot-portrait.png) |
 
-## Features
+## Looking for Mendeley for Android or EndNote for Android?
 
-- **Mendeley Library Sync (Non-Blocking Background Pull):**
-  - Sign in via Mendeley's official web session (`www.mendeley.com`).
-  - Pulls references, PDFs, folders/collections, tags (colored labels), and starred status in the background while you continue browsing and reading already-downloaded papers.
+Elsevier discontinued the official **Mendeley for Android** app, and **EndNote for Android** leaves many tablet researchers without a fast, offline-friendly PDF workspace. **CiteBird** connects directly to your existing Mendeley Web Library while keeping all PDFs, folders, tags, and annotations stored locally on your Android tablet.
+
+## Key Features
+
+- **Mendeley Library Sync:** Sign in with your Mendeley account and pull references, PDFs, collections/folders, labels, and starred items in the background.
 - **3-Column Tablet Workspace:**
-  - **Collapsible Left Sidebar:** `All References`, `Recently Added`, `Recently Read`, `Favorites`, `My Publications`, `Unsorted`, `Duplicates`, `Trash`, `Collections` (Mendeley folders), and `Labels`.
-  - **Paper Cards & Inline Attachment Drawer:** Star, multi-select, edit metadata, BibTeX/DOI copy, notes/abstract editor, save PDF to disk via SAF, and open journal DOI links.
-  - **Collapsible Right Filter & Sort Panel:** Live counts, sort (`Date Added`, `Publication Date`, `Title`, `Journal`, `Author`), and facet filters (`Has PDF`, `Has no PDF`, `Unsorted`, `Incomplete`, `Notes`, `Type`).
-- **PDF Reader & Annotations:**
-  - **Continuous Scroll** and **Single Page** modes.
-  - **1 Page** and **2 Pages (Book Spread)** layouts.
-  - Pinch-to-zoom, page jump, reading progress persistence, highlights, and sticky notes stored in Room.
-  - Full-screen immersive mode with auto-hiding system bars (swipe down from edge to reveal).
-- **Zero Proprietary PDF SDKs & Zero Telemetry:**
-  - Uses Android's built-in `PdfRenderer` (one page in memory at a time, capped at 2048 px, `< 512 MB` peak RAM).
-  - Scoped Storage / Storage Access Framework (no broad storage permissions).
+  - Collapsible left sidebar (`All References`, `Recently Added`, `Recently Read`, `Favorites`, `My Publications`, `Unsorted`, `Duplicates`, `Trash`, `Collections`, `Labels`).
+  - Tap any paper title to open its PDF directly, or tap the card for quick metadata, BibTeX/DOI copy, notes, and SAF export.
+  - Collapsible right sort & facet-filter panel (collapsed by default in portrait, open in landscape).
+- **Multi-Tab PDF Reader & Liquid Glass Toolbar:**
+  - Open multiple PDFs in top tabs, **Single Page** or **2-Page Book Spread**, **Continuous Scroll** or **Paged Swipe**, and crisp vector pinch-to-zoom.
+  - Annotate with **Pen (freehand ink)**, **Text Highlighter**, **Underline**, **Sticky Notes**, and **Eraser** (long-press any annotation to delete).
+- **Full-Screen Immersive Reading:** Auto-hiding system bars with zero proprietary PDF SDKs and zero telemetry.
 
-## Build
+## Build from Source
 
 Requires Android SDK 36 and JDK 21:
 
 ```bash
-./build.sh :app:assembleDebug
+./build.sh :app:assembleRelease
 ```
-
-## Documentation & Analysis
-
-- [docs/spec.md](docs/spec.md) — Target device & MVP specification
-- [docs/analysis.md](docs/analysis.md) — Static analysis of Mendeley Android 1.20.1 & Desktop 2.150.0
-- [docs/paperpile-analysis.md](docs/paperpile-analysis.md) — Architecture study of Paperpile 1.3.8
-- [docs/audit.md](docs/audit.md) — Code & UI audit log
 
 ## License
 
-Open-source (MIT).
+MIT
