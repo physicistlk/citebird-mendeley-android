@@ -1,6 +1,8 @@
 package com.refmanager.tablet.ui
 
 import android.graphics.Bitmap
+import android.graphics.RenderEffect
+import android.graphics.RuntimeShader
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
@@ -79,6 +81,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -87,12 +90,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -112,6 +121,61 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 private enum class ReaderMode { READ, PEN, HIGHLIGHT, UNDERLINE, NOTE, ERASER }
+
+private const val LIQUID_GLASS_AGSL = """
+    uniform shader content;
+    uniform float2 resolution;
+
+    half4 sampleFrost(float2 p, float radius) {
+        half4 c = content.eval(clamp(p, float2(1.0), resolution - float2(1.0))) * 0.36;
+        c += content.eval(clamp(p + float2(radius, 0.0), float2(1.0), resolution - float2(1.0))) * 0.16;
+        c += content.eval(clamp(p - float2(radius, 0.0), float2(1.0), resolution - float2(1.0))) * 0.16;
+        c += content.eval(clamp(p + float2(0.0, radius), float2(1.0), resolution - float2(1.0))) * 0.16;
+        c += content.eval(clamp(p - float2(0.0, radius), float2(1.0), resolution - float2(1.0))) * 0.16;
+        return c;
+    }
+
+    half4 main(float2 fragCoord) {
+        float2 halfSize = max(resolution * 0.5, float2(1.0));
+        float r = min(halfSize.x, halfSize.y);
+        float2 q = fragCoord - halfSize;
+        float spineHalf = max(halfSize.x - r, 0.0);
+        float qx = clamp(q.x, -spineHalf, spineHalf);
+        float2 dVec = float2(q.x - qx, q.y);
+        float dist = length(dVec);
+        float t = clamp(dist / max(r, 1.0), 0.0, 1.0);
+        float2 n = dist > 0.001 ? (dVec / dist) : float2(0.0, -1.0);
+
+        // 3D curved convex capsule lens profile (Apple Liquid Glass edge refraction)
+        float bevel = smoothstep(0.38, 1.0, t);
+        float lensPull = (t * 0.14 + pow(bevel, 2.35) * 0.56) * r;
+        float2 disp = n * lensPull;
+
+        // Soft frost in the core, sharper lens bend at the curved rim + RGB chromatic dispersion
+        float frostRadius = mix(3.2, 1.1, bevel);
+        half4 colR = sampleFrost(fragCoord - disp * 0.88, frostRadius);
+        half4 colG = sampleFrost(fragCoord - disp * 1.00, frostRadius);
+        half4 colB = sampleFrost(fragCoord - disp * 1.12, frostRadius);
+        half3 refracted = half3(colR.r, colG.g, colB.b);
+
+        // Translucent liquid glass body + inner caustic + directional Fresnel rim highlights
+        float topGlare = max(dot(n, normalize(float2(-0.32, -0.95))), 0.0);
+        float botBounce = max(dot(n, normalize(float2(0.32, 0.95))), 0.0);
+        float caustic = exp(-pow((t - 0.76) / 0.10, 2.0));
+        float rim = smoothstep(0.82, 0.99, t);
+
+        half3 glassTint = mix(half3(0.95, 0.98, 1.0), half3(0.86, 0.93, 1.0), half(t * 0.6));
+        half3 color = mix(refracted, glassTint, half(0.26));
+
+        // Add inner bevel caustic + specular Fresnel rim
+        color += half3(0.85, 0.95, 1.0) * half(caustic * 0.18 * (0.4 + 0.6 * topGlare));
+        color += half3(1.0, 1.0, 1.0) * half(pow(topGlare, 2.4) * smoothstep(0.55, 1.0, t) * 0.42);
+        color += half3(0.78, 0.91, 1.0) * half(pow(botBounce, 2.6) * smoothstep(0.62, 1.0, t) * 0.28);
+        color = mix(color, half3(1.0, 1.0, 1.0), half(rim * (0.35 + 0.50 * topGlare + 0.25 * botBounce)));
+
+        return half4(clamp(color, half3(0.0), half3(1.0)), 1.0);
+    }
+"""
 
 private data class NoteDraft(val page: Int, val anchor: PageRect)
 
@@ -334,118 +398,93 @@ fun ReaderScreen(
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            // Floating Liquid Glass tools bar with backdrop blur, lens refraction, and specular reflection
-            val glassShape = RoundedCornerShape(22.dp)
-            val glassBackdrop = remember(uri, pageIndex) { PdfPageLoader.getCached(uri, pageIndex) }
+            val pdfContentLayer = rememberGraphicsLayer()
+            var pillOffset by remember { mutableStateOf(Offset.Zero) }
+            val liquidShader = remember { RuntimeShader(LIQUID_GLASS_AGSL) }
+            val glassShape = RoundedCornerShape(50)
+
+            // Floating Apple Liquid Glass tools capsule with real-time AGSL lens refraction
             Surface(
                 color = Color.Transparent,
-                shadowElevation = 14.dp,
+                shadowElevation = 16.dp,
                 shape = glassShape,
                 border = BorderStroke(
-                    1.25.dp,
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.96f),
-                            Color(0xFFBCE3FF).copy(alpha = 0.72f),
-                            Color.White.copy(alpha = 0.45f),
-                            Color(0xFFD8F0FF).copy(alpha = 0.80f)
-                        ),
-                        start = Offset.Zero,
-                        end = Offset(600f, 120f)
+                    1.2.dp,
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.92f),
+                            Color(0xFFB8E2FF).copy(alpha = 0.45f),
+                            Color.White.copy(alpha = 0.68f)
+                        )
                     )
                 ),
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .zIndex(2f)
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                    .onGloballyPositioned { coords ->
+                        pillOffset = coords.positionInParent()
+                    }
                     .clip(glassShape)
             ) {
                 Box {
-                    if (glassBackdrop != null && !glassBackdrop.isRecycled) {
-                        Image(
-                            bitmap = glassBackdrop.asImageBitmap(),
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            alpha = 0.36f,
-                            modifier = Modifier
-                                .matchParentSize()
-                                .graphicsLayer(
-                                    scaleX = 1.12f,
-                                    scaleY = 1.12f,
-                                    translationY = -12f
-                                )
-                                .blur(22.dp)
-                        )
-                    }
-                    Box(
+                    // Live refracted backdrop layer powered by AGSL RuntimeShader
+                    Spacer(
                         modifier = Modifier
                             .matchParentSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = 0.62f),
-                                        Color(0xFFE4F1FC).copy(alpha = 0.40f),
-                                        Color.White.copy(alpha = 0.52f)
-                                    )
+                            .graphicsLayer {
+                                liquidShader.setFloatUniform(
+                                    "resolution",
+                                    size.width.coerceAtLeast(1f),
+                                    size.height.coerceAtLeast(1f)
                                 )
-                            )
+                                renderEffect = RenderEffect
+                                    .createRuntimeShaderEffect(liquidShader, "content")
+                                    .asComposeRenderEffect()
+                            }
                             .drawBehind {
-                                // Diagonal specular glass reflection sweep
-                                drawRect(
-                                    brush = Brush.linearGradient(
-                                        0.0f to Color.White.copy(alpha = 0.48f),
-                                        0.28f to Color.White.copy(alpha = 0.14f),
-                                        0.52f to Color.Transparent,
-                                        0.78f to Color(0xFFBFE6FF).copy(alpha = 0.16f),
-                                        1.0f to Color.White.copy(alpha = 0.28f),
-                                        start = Offset(0f, 0f),
-                                        end = Offset(size.width * 0.75f, size.height * 1.4f)
-                                    )
-                                )
-                                // Crisp top specular rim reflection
-                                drawLine(
-                                    color = Color.White.copy(alpha = 0.92f),
-                                    start = Offset(18f, 1.5f),
-                                    end = Offset(size.width - 18f, 1.5f),
-                                    strokeWidth = 2f
-                                )
+                                translate(-pillOffset.x, -pillOffset.y) {
+                                    drawLayer(pdfContentLayer)
+                                }
                             }
                     )
                     Row(
                         modifier = Modifier
                             .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                    FilterChip(
-                        selected = continuousMode,
-                        onClick = {
-                            val target = pageIndex
-                            continuousMode = !continuousMode
-                            jumpToPage(target)
-                        },
-                        label = { Text(if (continuousMode) "Continuous scroll" else "Single page") }
-                    )
-                    FilterChip(
-                        selected = pagesPerView == 2,
-                        onClick = {
-                            val target = pageIndex
-                            pagesPerView = if (pagesPerView == 1) 2 else 1
-                            jumpToPage(target)
-                        },
-                        label = { Text(if (pagesPerView == 1) "1 page" else "2 pages (book)") }
-                    )
-                    TextButton(onClick = { showAnnotations = true }) {
-                        Text("Annotations (${annotations.size})")
-                    }
+                        GlassChip(
+                            label = if (continuousMode) "Continuous scroll" else "Single page",
+                            selected = continuousMode,
+                            onClick = {
+                                val target = pageIndex
+                                continuousMode = !continuousMode
+                                jumpToPage(target)
+                            }
+                        )
+                        GlassChip(
+                            label = if (pagesPerView == 1) "1 page" else "2 pages (book)",
+                            selected = pagesPerView == 2,
+                            onClick = {
+                                val target = pageIndex
+                                pagesPerView = if (pagesPerView == 1) 2 else 1
+                                jumpToPage(target)
+                            }
+                        )
+                        GlassChip(
+                            label = "Annotations (${annotations.size})",
+                            selected = false,
+                            onClick = { showAnnotations = true }
+                        )
 
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(22.dp)
-                            .background(CiteColors.Border)
-                    )
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(22.dp)
+                                .background(Color.White.copy(alpha = 0.55f))
+                        )
 
                     ToolButton(
                         icon = Icons.Filled.PanTool,
@@ -510,12 +549,18 @@ fun ReaderScreen(
                 }
             }
 
-            // Main reader area (full width, scrolls behind the Liquid Glass tools bar)
+            // Main reader area (full width, recorded into pdfContentLayer so the Liquid Glass bar refracts live PDF pixels)
             BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF2B2D30))
-                .clipToBounds()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF2B2D30))
+                    .clipToBounds()
+                    .drawWithContent {
+                        pdfContentLayer.record {
+                            this@drawWithContent.drawContent()
+                        }
+                        drawLayer(pdfContentLayer)
+                    }
                     // Pinch-to-zoom (2+ fingers always, 1-finger pan only when zoomed > 1f) + double-tap zoom
                     .pointerInput(mode) {
                         detectTapGestures(
@@ -583,7 +628,7 @@ fun ReaderScreen(
                             )
                         LazyColumn(
                             state = continuousListState,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 64.dp, bottom = 16.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 28.dp, bottom = 16.dp),
                             userScrollEnabled = !isPinching && zoom <= 1.02f && mode == ReaderMode.READ,
                             modifier = listModifier
                         ) {
@@ -671,7 +716,7 @@ fun ReaderScreen(
                             userScrollEnabled = !isPinching && zoom <= 1.02f && mode == ReaderMode.READ,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(top = 60.dp, bottom = 6.dp)
+                                .padding(top = 18.dp, bottom = 6.dp)
                                 .graphicsLayer(
                                     scaleX = zoom,
                                     scaleY = zoom,
@@ -946,23 +991,91 @@ fun ReaderScreen(
 }
 
 @Composable
+private fun GlassChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(50)
+    Surface(
+        onClick = onClick,
+        shape = shape,
+        color = Color.Transparent,
+        border = BorderStroke(
+            1.dp,
+            if (selected) Color.White.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.55f)
+        ),
+        modifier = Modifier
+            .clip(shape)
+            .background(
+                if (selected) {
+                    Brush.verticalGradient(
+                        listOf(
+                            CiteColors.TitleNavy.copy(alpha = 0.82f),
+                            CiteColors.TitleNavy.copy(alpha = 0.68f)
+                        )
+                    )
+                } else {
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.52f),
+                            Color.White.copy(alpha = 0.24f)
+                        )
+                    )
+                }
+            )
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            color = if (selected) Color.White else Color(0xFF142334),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+    }
+}
+
+@Composable
 private fun ToolButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     selected: Boolean,
     onClick: () -> Unit
 ) {
+    val shape = RoundedCornerShape(50)
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        color = if (selected) CiteColors.SidebarSelected else Color.Transparent,
-        modifier = Modifier.size(34.dp)
+        shape = shape,
+        color = Color.Transparent,
+        border = BorderStroke(
+            1.dp,
+            if (selected) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.45f)
+        ),
+        modifier = Modifier
+            .size(34.dp)
+            .clip(shape)
+            .background(
+                if (selected) {
+                    Brush.verticalGradient(
+                        listOf(
+                            CiteColors.TitleNavy.copy(alpha = 0.84f),
+                            CiteColors.TitleNavy.copy(alpha = 0.70f)
+                        )
+                    )
+                } else {
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.48f),
+                            Color.White.copy(alpha = 0.20f)
+                        )
+                    )
+                }
+            )
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (selected) Color.White else CiteColors.TextSecondary,
+                tint = if (selected) Color.White else Color(0xFF142334),
                 modifier = Modifier.size(18.dp)
             )
         }
@@ -1230,14 +1343,6 @@ private fun PdfPageSurface(
                     }
                 }
             }
-        }
-        if (!fitHeight) {
-            Text(
-                "Page ${pageIndex + 1} of $pageCount",
-                fontSize = 11.sp,
-                color = Color(0xFFBDBDBD),
-                modifier = Modifier.padding(top = 3.dp, bottom = 4.dp)
-            )
         }
     }
 }
