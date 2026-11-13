@@ -63,6 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val filterState: StateFlow<LibraryFilter> = filter
 
     val selectedId = MutableStateFlow<Long?>(null)
+    val openTabIds = MutableStateFlow<List<Long>>(emptyList())
     val selectedIds = MutableStateFlow<Set<Long>>(emptySet())
     val isImporting = MutableStateFlow(false)
     val message = MutableStateFlow<String?>(null)
@@ -92,6 +93,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = null
         )
+
+    val openTabs: StateFlow<List<Document>> = combine(openTabIds, allDocuments) { ids, docs ->
+        val byId = docs.associateBy { it.id }
+        ids.mapNotNull { byId[it] }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList()
+    )
 
     /** Annotations of the open document; empty when nothing is selected. */
     val annotations: StateFlow<List<Annotation>> = selectedId
@@ -261,7 +271,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun select(id: Long?) {
+        if (id != null && id !in openTabIds.value) {
+            openTabIds.value = openTabIds.value + id
+        }
         selectedId.value = id
+    }
+
+    fun showLibrary() {
+        selectedId.value = null
+    }
+
+    fun closeTab(id: Long) {
+        val current = openTabIds.value
+        val idx = current.indexOf(id)
+        val remaining = current.filterNot { it == id }
+        openTabIds.value = remaining
+        if (selectedId.value == id) {
+            selectedId.value = remaining.getOrNull((idx - 1).coerceAtLeast(0))
+        }
     }
 
     fun importPdf(uri: Uri) {
@@ -338,6 +365,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runCatching { repository.addHighlight(documentId, page, color, rects) }
                 .onSuccess { message.value = "Highlight saved" }
                 .onFailure { message.value = it.message ?: "Could not save highlight" }
+        }
+    }
+
+    fun addUnderline(page: Int, color: Int, rects: List<PageRect>) {
+        val documentId = selectedId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.addUnderline(documentId, page, color, rects) }
+                .onFailure { message.value = it.message ?: "Could not save underline" }
+        }
+    }
+
+    fun addInk(page: Int, color: Int, points: List<PageRect>) {
+        val documentId = selectedId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.addInk(documentId, page, color, points) }
+                .onFailure { message.value = it.message ?: "Could not save pen stroke" }
         }
     }
 

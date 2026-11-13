@@ -36,6 +36,8 @@ data class Annotation(
     val updatedAt: Long = System.currentTimeMillis()
 ) {
     val isHighlight: Boolean get() = kind == KIND_HIGHLIGHT
+    val isUnderline: Boolean get() = kind == KIND_UNDERLINE
+    val isInk: Boolean get() = kind == KIND_INK
 
     val rects: List<PageRect> get() = decodeRects(rectsData)
 
@@ -43,6 +45,7 @@ data class Annotation(
         const val KIND_HIGHLIGHT = "highlight"
         const val KIND_NOTE = "note"
         const val KIND_UNDERLINE = "underline"
+        const val KIND_INK = "ink"
     }
 }
 

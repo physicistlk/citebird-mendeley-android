@@ -5,7 +5,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -32,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -51,6 +54,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -135,6 +139,7 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
     val allDocuments by viewModel.allDocuments.collectAsState()
     val documents by viewModel.documents.collectAsState()
     val selected by viewModel.selected.collectAsState()
+    val openTabs by viewModel.openTabs.collectAsState()
     val selectedIds by viewModel.selectedIds.collectAsState()
     val annotations by viewModel.annotations.collectAsState()
     val filter by viewModel.filterState.collectAsState()
@@ -160,7 +165,8 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
     var assigningCollections by remember { mutableStateOf<Document?>(null) }
     var saveToDiskDoc by remember { mutableStateOf<Document?>(null) }
     var leftSidebarVisible by remember { mutableStateOf(true) }
-    var rightPanelVisible by remember { mutableStateOf(true) }
+    val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    var rightPanelVisible by remember(isLandscape) { mutableStateOf(isLandscape) }
 
     LaunchedEffect(message) {
         val text = message
@@ -190,6 +196,10 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
         else mendeleyLauncher.launch(Intent(context, MendeleyAuthActivity::class.java))
     }
 
+    BackHandler(enabled = selected != null) {
+        viewModel.showLibrary()
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = CiteColors.CanvasBg,
@@ -204,9 +214,25 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                 ReaderScreen(
                     document = openDoc,
                     annotations = annotations,
-                    onBack = { viewModel.select(null) },
+                    onBack = viewModel::showLibrary,
+                    tabsBar = if (openTabs.isNotEmpty()) {
+                        {
+                            OpenTabsBar(
+                                tabs = openTabs,
+                                activeId = openDoc.id,
+                                onSelectLibrary = viewModel::showLibrary,
+                                onSelectTab = { id -> viewModel.select(id) },
+                                onCloseTab = viewModel::closeTab,
+                                showDivider = false,
+                                transparentBg = true,
+                                showLibraryTab = false
+                            )
+                        }
+                    } else null,
                     onProgress = { page -> viewModel.updateProgress(openDoc.id, page) },
                     onAddHighlight = viewModel::addHighlight,
+                    onAddUnderline = viewModel::addUnderline,
+                    onAddInk = viewModel::addInk,
                     onAddNote = viewModel::addNote,
                     onUpdateNote = viewModel::updateNote,
                     onDeleteAnnotation = viewModel::deleteAnnotation
@@ -214,6 +240,15 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
             }
         } else {
             Column(Modifier.fillMaxSize().padding(padding)) {
+                if (openTabs.isNotEmpty()) {
+                    OpenTabsBar(
+                        tabs = openTabs,
+                        activeId = null,
+                        onSelectLibrary = viewModel::showLibrary,
+                        onSelectTab = { id -> viewModel.select(id) },
+                        onCloseTab = viewModel::closeTab
+                    )
+                }
                 CiteTopBar(
                     onToggleSidebar = { leftSidebarVisible = !leftSidebarVisible },
                     query = filter.query,
@@ -339,37 +374,42 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                             modifier = Modifier.weight(1f).fillMaxHeight()
                         )
 
-                        VerticalDivider(thickness = 1.dp, color = CiteColors.Border)
+                        AnimatedVisibility(visible = rightPanelVisible) {
+                            Row(Modifier.fillMaxHeight()) {
+                                VerticalDivider(thickness = 1.dp, color = CiteColors.Border)
 
-                        if (rightPanelVisible) {
-                            RightFilterPanel(
-                                allDocuments = allDocuments,
-                                filteredDocuments = documents,
-                                folderMemberships = folderMemberships,
-                                selectedCount = selectedIds.size,
-                                filter = filter,
-                                onSort = viewModel::setSort,
-                                onPdfFilter = viewModel::setPdfFilter,
-                                onDocType = viewModel::setDocTypeFilter,
-                                onCollapse = { rightPanelVisible = false },
-                                modifier = Modifier.width(inspectorWidth).fillMaxHeight()
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .width(28.dp)
-                                    .fillMaxHeight()
-                                    .background(CiteColors.SidebarBg)
-                                    .clickable { rightPanelVisible = true },
-                                contentAlignment = Alignment.TopCenter
-                            ) {
-                                Icon(
-                                    Icons.Filled.ChevronLeft,
-                                    contentDescription = "Expand panel",
-                                    tint = CiteColors.TextSecondary,
-                                    modifier = Modifier.padding(top = 14.dp).size(18.dp)
+                                RightFilterPanel(
+                                    allDocuments = allDocuments,
+                                    filteredDocuments = documents,
+                                    folderMemberships = folderMemberships,
+                                    selectedCount = selectedIds.size,
+                                    filter = filter,
+                                    onSort = viewModel::setSort,
+                                    onPdfFilter = viewModel::setPdfFilter,
+                                    onDocType = viewModel::setDocTypeFilter,
+                                    modifier = Modifier.width(inspectorWidth).fillMaxHeight()
                                 )
                             }
+                        }
+                    }
+
+                    Surface(
+                        onClick = { rightPanelVisible = !rightPanelVisible },
+                        shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp),
+                        color = CiteColors.SidebarBg,
+                        border = BorderStroke(1.dp, CiteColors.Border),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 12.dp)
+                            .size(width = 22.dp, height = 38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (rightPanelVisible) Icons.Filled.ChevronRight else Icons.Filled.ChevronLeft,
+                                contentDescription = if (rightPanelVisible) "Collapse panel" else "Expand panel",
+                                tint = CiteColors.TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
                 }
@@ -1467,7 +1507,8 @@ private fun PaperCard(
                             fontSize = 14.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = CiteColors.TitleNavy,
-                            lineHeight = 19.sp
+                            lineHeight = 19.sp,
+                            modifier = Modifier.clickable(onClick = if (hasPdf) onOpenPdf else onToggleExpand)
                         )
                         labels.forEach { label ->
                             Surface(
@@ -1875,7 +1916,6 @@ private fun RightFilterPanel(
     onSort: (SortOrder) -> Unit,
     onPdfFilter: (PdfFilter) -> Unit,
     onDocType: (String) -> Unit,
-    onCollapse: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val activeDocs = remember(allDocuments) { allDocuments.filter { !it.trashed } }
@@ -2006,18 +2046,104 @@ private fun RightFilterPanel(
                 }
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(6.dp))
-        Surface(
-            onClick = onCollapse,
-            shape = RoundedCornerShape(3.dp),
-            color = Color.White,
-            border = BorderStroke(1.dp, CiteColors.Border),
-            modifier = Modifier.size(width = 28.dp, height = 22.dp)
+@Composable
+private fun OpenTabsBar(
+    tabs: List<Document>,
+    activeId: Long?,
+    onSelectLibrary: () -> Unit,
+    onSelectTab: (Long) -> Unit,
+    onCloseTab: (Long) -> Unit,
+    showDivider: Boolean = true,
+    transparentBg: Boolean = false,
+    showLibraryTab: Boolean = true
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (transparentBg) Color.Transparent else CiteColors.SidebarBg)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Collapse panel", tint = CiteColors.TextSecondary, modifier = Modifier.size(16.dp))
+            if (showLibraryTab) {
+                val libraryActive = activeId == null
+                Surface(
+                    onClick = onSelectLibrary,
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (libraryActive) CiteColors.TitleNavy else Color.White,
+                    border = BorderStroke(1.dp, if (libraryActive) CiteColors.TitleNavy else CiteColors.Border)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MenuBook,
+                            contentDescription = null,
+                            tint = if (libraryActive) Color.White else CiteColors.TextSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Library",
+                            fontSize = 12.sp,
+                            fontWeight = if (libraryActive) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (libraryActive) Color.White else CiteColors.TextSecondary
+                        )
+                    }
+                }
             }
+
+            tabs.forEach { doc ->
+                val isActive = activeId == doc.id
+                Surface(
+                    onClick = { onSelectTab(doc.id) },
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (isActive) CiteColors.TitleNavy else Color.White,
+                    border = BorderStroke(1.dp, if (isActive) CiteColors.TitleNavy else CiteColors.Border)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PictureAsPdf,
+                            contentDescription = null,
+                            tint = if (isActive) Color.White else CiteColors.TextMuted,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = doc.title.ifBlank { "Untitled PDF" },
+                            fontSize = 12.sp,
+                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (isActive) Color.White else CiteColors.TextSecondary,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 180.dp)
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close tab",
+                            tint = if (isActive) Color.White.copy(alpha = 0.85f) else CiteColors.TextMuted,
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clickable { onCloseTab(doc.id) }
+                        )
+                    }
+                }
+            }
+        }
+        if (showDivider) {
+            HorizontalDivider(thickness = 1.dp, color = CiteColors.Border)
         }
     }
 }

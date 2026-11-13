@@ -300,6 +300,30 @@ class DocumentRepository(
         )
     }
 
+    suspend fun addUnderline(documentId: Long, page: Int, color: Int, rects: List<PageRect>) {
+        annotationDao.insert(
+            Annotation(
+                documentId = documentId,
+                page = page,
+                kind = Annotation.KIND_UNDERLINE,
+                color = color,
+                rectsData = encodeRects(rects)
+            )
+        )
+    }
+
+    suspend fun addInk(documentId: Long, page: Int, color: Int, points: List<PageRect>) {
+        annotationDao.insert(
+            Annotation(
+                documentId = documentId,
+                page = page,
+                kind = Annotation.KIND_INK,
+                color = color,
+                rectsData = encodeRects(points)
+            )
+        )
+    }
+
     suspend fun addNote(documentId: Long, page: Int, color: Int, anchor: PageRect, note: String) {
         annotationDao.insert(
             Annotation(
