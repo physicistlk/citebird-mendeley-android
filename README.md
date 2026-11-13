@@ -8,6 +8,12 @@ Designed for Android 16+ tablets (Paperpile-inspired 3-column workspace + Mendel
 
 Elsevier discontinued the official **Mendeley for Android** app (1.20.1, `targetSdk 29`). CiteBird provides an open-source, pure-Kotlin / Jetpack Compose alternative that connects directly to your Mendeley library while keeping all PDFs and annotations local on your tablet.
 
+## Screenshots
+
+| Landscape | Portrait |
+| --- | --- |
+| ![CiteBird Landscape](docs/screenshot-landscape.png) | ![CiteBird Portrait](docs/screenshot-portrait.png) |
+
 ## Features
 
 - **Mendeley Library Sync (Non-Blocking Background Pull):**
