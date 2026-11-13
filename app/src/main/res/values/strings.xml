@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CiteBird</string>
+    <string name="library">Library</string>
+    <string name="search_hint">Search titles, authors, journals</string>
+    <string name="empty_library">No documents yet</string>
+    <string name="empty_library_hint">Import a PDF to get started</string>
+    <string name="import_pdf">Import PDF</string>
+    <string name="open">Open</string>
+    <string name="back">Back</string>
+    <string name="select_document">Select a document</string>
+    <string name="page_of">Page %1$d of %2$d</string>
+</resources>
