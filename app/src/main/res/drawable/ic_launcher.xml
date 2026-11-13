@@ -7,8 +7,8 @@
     <group
         android:pivotX="54"
         android:pivotY="55"
-        android:scaleX="1.40"
-        android:scaleY="1.40">
+        android:scaleX="1.49"
+        android:scaleY="1.49">
 
     <!-- Book Cover Shadow -->
     <path
